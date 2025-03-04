@@ -23,6 +23,7 @@
 #include "config.h"
 #include "uimenu.h"
 #include "uibuttons.h"
+#include "displaybuffer.h"
 #include <sensor/ky040.h>
 #include <display/hd44780device.h>
 #include <display/ssd1306device.h>
@@ -79,7 +80,7 @@ private:
 	CSSD1306Device *m_pSSD1306;
 	CST7789Display *m_pST7789Display;
 	CST7789Device  *m_pST7789;
-	CWriteBufferDevice *m_pLCDBuffered;
+	CDisplayBufferDevice *m_pLCDBuffered;
 	
 	CUIButtons *m_pUIButtons;
 

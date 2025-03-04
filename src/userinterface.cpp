@@ -152,12 +152,12 @@ bool CUserInterface::Initialize (void)
 		}
 		assert (m_pLCD);
 
-		m_pLCDBuffered = new CWriteBufferDevice (m_pLCD);
+		m_pLCDBuffered = new CDisplayBufferDevice (m_pLCD);
 		assert (m_pLCDBuffered);
 
 		LCDWrite ("\x1B[?25l\x1B""d+");		// cursor off, autopage mode
 		LCDWrite ("MiniDexed\nLoading...");
-		m_pLCDBuffered->Update ();
+		m_pLCDBuffered->ForceUpdate ();
 
 		LOGDBG ("LCD initialized");
 	}
@@ -204,7 +204,7 @@ void CUserInterface::Process (void)
 {
 	if (m_pLCDBuffered)
 	{
-		m_pLCDBuffered->Update ();
+		m_pLCDBuffered->Update();
 	}
 	if (m_pUIButtons)
 	{
@@ -269,7 +269,7 @@ void CUserInterface::DisplayWrite (const char *pMenu, const char *pParam, const 
 		Msg.Append ("\x1B[K");		// clear end of line
 	}
 
-	LCDWrite (Msg);
+	m_pLCDBuffered->DisplayWrite(Msg);
 }
 
 void CUserInterface::LCDWrite (const char *pString)

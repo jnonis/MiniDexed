@@ -859,28 +859,28 @@ std::string CMiniDexed::getMasterFXName ()
 
 void CMiniDexed::SetSendFX1 (unsigned nSend, unsigned nTG)
 {
-	nSend=constrain((int)nSend,0,99);
+	nSend=constrain((int)nSend,0,100);
 
 	assert (nTG < CConfig::AllToneGenerators);
 	if (nTG >= m_nToneGenerators) return;  // Not an active TG
 
 	m_nSendFX1[nTG] = nSend;
 
-	send_fx1_mixer->gain(nTG,mapfloat(nSend,0,99,0.0f,1.0f));
+	send_fx1_mixer->gain(nTG,mapfloat(nSend,0,100,0.0f,1.0f));
 	
 	m_UI.ParameterChanged ();
 }
 
 void CMiniDexed::SetReverbSend (unsigned nReverbSend, unsigned nTG)
 {
-	nReverbSend=constrain((int)nReverbSend,0,99);
+	nReverbSend=constrain((int)nReverbSend,0,100);
 
 	assert (nTG < CConfig::AllToneGenerators);
 	if (nTG >= m_nToneGenerators) return;  // Not an active TG
 
 	m_nSendFX2[nTG] = nReverbSend;
 
-	send_fx2_mixer->gain(nTG,mapfloat(nReverbSend,0,99,0.0f,1.0f));
+	send_fx2_mixer->gain(nTG,mapfloat(nReverbSend,0,100,0.0f,1.0f));
 	
 	m_UI.ParameterChanged ();
 }
