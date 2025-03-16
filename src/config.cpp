@@ -161,6 +161,7 @@ void CConfig::Load (void)
 
 	m_nDoubleClickTimeout = m_Properties.GetNumber ("DoubleClickTimeout", 400);
 	m_nLongPressTimeout = m_Properties.GetNumber ("LongPressTimeout", 600);
+	m_nButtonsDebounceTime = m_Properties.GetNumber ("ButtonsDebounceTime", 60);
 
 	m_nButtonPinPgmUp = m_Properties.GetNumber ("ButtonPinPgmUp", 0);
 	m_nButtonPinPgmDown = m_Properties.GetNumber ("ButtonPinPgmDown", 0);
@@ -199,6 +200,8 @@ void CConfig::Load (void)
 	m_bProfileEnabled = m_Properties.GetNumber ("ProfileEnabled", 0) != 0;
 	m_bPerformanceSelectToLoad = m_Properties.GetNumber ("PerformanceSelectToLoad", 1) != 0;
 	m_bPerformanceSelectChannel = m_Properties.GetNumber ("PerformanceSelectChannel", 0);
+
+	m_bFXEnabled = m_Properties.GetNumber("FXEnabled", 0) != 0;
 }
 
 unsigned CConfig::GetToneGenerators (void) const
@@ -557,6 +560,11 @@ unsigned CConfig::GetLongPressTimeout (void) const
 	return m_nLongPressTimeout;
 }
 
+unsigned CConfig::GetButtonsDebounceTime(void) const
+{
+	return m_nButtonsDebounceTime;
+}
+
 unsigned CConfig::GetButtonPinPgmUp (void) const
 {
 	return m_nButtonPinPgmUp;
@@ -715,4 +723,9 @@ bool CConfig::GetPerformanceSelectToLoad (void) const
 unsigned CConfig::GetPerformanceSelectChannel (void) const
 {
 	return m_bPerformanceSelectChannel;
+}
+
+bool CConfig::GetFXEnabled (void) const
+{
+	return m_bFXEnabled;
 }

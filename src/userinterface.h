@@ -23,6 +23,7 @@
 #include "config.h"
 #include "uimenu.h"
 #include "uibuttons.h"
+#include "displaybuffer.h"
 #include <sensor/ky040.h>
 #include <display/hd44780device.h>
 #include <display/ssd1306device.h>
@@ -31,6 +32,7 @@
 #include <circle/writebuffer.h>
 #include <circle/i2cmaster.h>
 #include <circle/spimaster.h>
+#include <circle/timer.h>
 
 class CMiniDexed;
 
@@ -78,7 +80,7 @@ private:
 	CSSD1306Device *m_pSSD1306;
 	CST7789Display *m_pST7789Display;
 	CST7789Device  *m_pST7789;
-	CWriteBufferDevice *m_pLCDBuffered;
+	CDisplayBufferDevice *m_pLCDBuffered;
 	
 	CUIButtons *m_pUIButtons;
 
@@ -86,6 +88,8 @@ private:
 
 	CKY040 *m_pRotaryEncoder;
 	bool m_bSwitchPressed;
+	unsigned m_nRotaryEncoderLastReadTime;
+	int m_nRotaryEncoderCounter=0;
 
 	CUIMenu m_Menu;
 };
