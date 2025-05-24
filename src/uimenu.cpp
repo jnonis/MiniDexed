@@ -3591,24 +3591,22 @@ void CUIMenu::InputTxt (CUIMenu *pUIMenu, TMenuEvent Event)
 	// \E[?25h	Normal cursor visible
 	// \E[?25l	Cursor invisible
 	
-	std::string escCursor="\E[?25h\E[2;"; // this is to locate cursor
-	escCursor += to_string(nPosition + 2);
-	escCursor += "H";
+	//std::string escCursor="\E[?25h\E[2;"; // this is to locate cursor
+	//escCursor += to_string(nPosition + 2);
+	//escCursor += "H";
 	
-
 	std::string Value = pUIMenu->m_InputText;
 	Value[nPosition]=nChar;
 	pUIMenu->m_InputText = Value;
 	
 	if(pUIMenu->m_nCurrentParameter == 3)
-		{
-			pUIMenu->m_pMiniDexed->SetVoiceName(pUIMenu->m_InputText, nTG);
-		}	
+	{
+		pUIMenu->m_pMiniDexed->SetVoiceName(pUIMenu->m_InputText, nTG);
+	}	
 		
-	Value = Value + " " + escCursor ;
-	pUIMenu->m_pUI->DisplayWrite (MenuTitleR.c_str(),MenuTitleL.c_str(), Value.c_str(), false, false);
-	
-	
+	//Value = Value + " " + escCursor ;
+	pUIMenu->m_pUI->DisplayWrite (MenuTitleR.c_str(),MenuTitleL.c_str(), Value.c_str(), false, false,
+			pUIMenu->m_pConfig->GetLCDColumns() + nPosition + 1);
 }
 
 void CUIMenu::EditTGParameterModulation (CUIMenu *pUIMenu, TMenuEvent Event) 

@@ -52,6 +52,7 @@ CUserInterface::~CUserInterface (void)
 
 bool CUserInterface::Initialize (void)
 {
+	LOGNOTE ("CUserInterface Initialize");
 	assert (m_pConfig);
 
 	if (m_pConfig->GetLCDEnabled ())
@@ -150,9 +151,10 @@ bool CUserInterface::Initialize (void)
 			LOGDBG ("LCD: HD44780 I2C");
 			m_pLCD = m_pHD44780;
 		}
+		LOGNOTE ("CUserInterface m_pLCD");
 		assert (m_pLCD);
 
-		m_pLCDBuffered = new CDisplayBufferDevice (m_pLCD);
+		m_pLCDBuffered = new CDisplayBufferDevice (m_pLCD, m_pConfig->GetLCDColumns());
 		assert (m_pLCDBuffered);
 
 		LCDWrite ("\x1B[?25l\x1B""d+");		// cursor off, autopage mode
@@ -218,58 +220,20 @@ void CUserInterface::ParameterChanged (void)
 }
 
 void CUserInterface::DisplayWrite (const char *pMenu, const char *pParam, const char *pValue,
-				   bool bArrowDown, bool bArrowUp)
+	bool bArrowDown, bool bArrowUp)
+{
+	this->DisplayWrite(pMenu, pParam, pValue, bArrowDown, bArrowUp, -1);
+}
+
+void CUserInterface::DisplayWrite (const char *pMenu, const char *pParam, const char *pValue,
+				   bool bArrowDown, bool bArrowUp, int nCursor)
 {
 	assert (pMenu);
 	assert (pParam);
 	assert (pValue);
 
-	CString Msg ("\x1B[H\E[?25l");		// cursor home and off
-
-	// first line
-	Msg.Append (pParam);
-
-	size_t nLen = strlen (pParam) + strlen (pMenu);
-	if (nLen < m_pConfig->GetLCDColumns ())
-	{
-		for (unsigned i = m_pConfig->GetLCDColumns ()-nLen; i > 0; i--)
-		{
-			Msg.Append (" ");
-		}
-	}
-
-	Msg.Append (pMenu);
-
-	// second line
-	CString Value (" ");
-	if (bArrowDown)
-	{
-		Value = "<";			// arrow left character
-	}
-
-	Value.Append (pValue);
-
-	if (bArrowUp)
-	{
-		if (Value.GetLength () < m_pConfig->GetLCDColumns ()-1)
-		{
-			for (unsigned i = m_pConfig->GetLCDColumns ()-Value.GetLength ()-1; i > 0; i--)
-			{
-				Value.Append (" ");
-			}
-		}
-
-		Value.Append (">");		// arrow right character
-	}
-
-	Msg.Append (Value);
-
-	if (Value.GetLength () < m_pConfig->GetLCDColumns ())
-	{
-		Msg.Append ("\x1B[K");		// clear end of line
-	}
-
-	m_pLCDBuffered->DisplayWrite(Msg);
+	m_pLCDBuffered->SetCursor(nCursor);
+	m_pLCDBuffered->DisplayWrite(pMenu, pParam, pValue, bArrowDown, bArrowUp);
 }
 
 void CUserInterface::LCDWrite (const char *pString)

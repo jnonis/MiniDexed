@@ -29,11 +29,13 @@
 class CDisplayBufferDevice : public CWriteBufferDevice
 {
 public:
-    CDisplayBufferDevice(CDevice *pDevice, size_t nBufferSize = 4096);
+    CDisplayBufferDevice(CDevice *pDevice, unsigned nColumns, size_t nBufferSize = 4096);
     ~CDisplayBufferDevice();
     void DisplayWrite(CString Msg);
+    void DisplayWrite(const char *pMenu, const char *pParam, const char *pValue, bool bArrowDown, bool bArrowUp);
     void Update();
     void ForceUpdate();
+    void SetCursor(int nCursor);
 private:
 #ifndef ARM_ALLOW_MULTI_CORE
 	// Single core RPis
@@ -51,9 +53,15 @@ private:
 
     bool m_bInitalized = false;
     CString m_DisplayWriteBuffer;
+    CString m_DisplayState;
 	bool m_bDisplayWriteUpdate;
 	unsigned long m_nDisplayWriteUpdateTime;
 	unsigned long m_nLastLCDUpdateTime;
+    unsigned m_nColumns;
+    int m_nCursor;
+    int m_nCursorState;
+
+    CString PrepareMessage();
 };
 
 #endif

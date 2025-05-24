@@ -55,6 +55,8 @@ public:
 	// +----------------+
 	void DisplayWrite (const char *pMenu, const char *pParam, const char *pValue,
 			   bool bArrowDown, bool bArrowUp);
+	void DisplayWrite (const char *pMenu, const char *pParam, const char *pValue,
+			   bool bArrowDown, bool bArrowUp, int nCursor);
 
 	// To be called from the MIDI device on reception of a MIDI CC message
 	void UIMIDICmdHandler (unsigned nMidiCh, unsigned nMidiCmd, unsigned nMidiData1, unsigned nMidiData2);
