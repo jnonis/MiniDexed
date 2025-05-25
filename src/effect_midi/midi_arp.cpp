@@ -26,6 +26,11 @@ void MidiArp::setTempo(unsigned tempo)
 	arpeggiator.setBpm(tempo);
 }
 
+bool MidiArp::isPlaying()
+{
+	return arpeggiator.isPlaying();
+}
+
 void MidiArp::setParameter(unsigned param, unsigned value)
 {
 	switch (param)

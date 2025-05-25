@@ -91,6 +91,7 @@ public:
     }
 
     virtual void setTempo(unsigned tempo);
+    virtual bool isPlaying();
     virtual void setParameter(unsigned param, unsigned value);
     virtual unsigned getParameter(unsigned param);
     

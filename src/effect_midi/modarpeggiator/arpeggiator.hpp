@@ -70,6 +70,7 @@ public:
 	void emptyMidiBuffer();
 	void allNotesOff();
 	struct MidiBuffer getMidiBuffer();
+	bool isPlaying();
 	void process(const MidiEvent* event, uint32_t eventCount, uint32_t n_frames);
 private:
 	uint8_t midiNotes[NUM_VOICES][3];

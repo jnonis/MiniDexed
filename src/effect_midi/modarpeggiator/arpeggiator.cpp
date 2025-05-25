@@ -657,3 +657,8 @@ void Arpeggiator::process(const MidiEvent* events, uint32_t eventCount, uint32_t
 	}
 	midiHandler.mergeBuffers();
 }
+
+bool Arpeggiator::isPlaying()
+{
+	return arpEnabled && notesPressed > 0;
+}

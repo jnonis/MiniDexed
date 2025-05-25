@@ -1000,6 +1000,13 @@ void CMiniDexed::setTempo(unsigned nValue)
 
 bool CMiniDexed::isPlaying(void)
 {
+	for (unsigned i = 0; i < m_pConfig->GetToneGenerators(); i++)
+	{
+		if (m_MidiArp[i]->isPlaying())
+		{
+			return true;
+		}
+	}
 	return m_bPlaying;
 }
 
@@ -1536,6 +1543,8 @@ void CMiniDexed::ProcessSound (void)
 {
 	assert (m_pSoundDevice);
 
+	bool currentPlayingState = isPlaying();
+
 	unsigned nFrames = m_nQueueSizeFrames - m_pSoundDevice->GetQueueFramesAvail ();
 	if (nFrames >= m_nQueueSizeFrames/2)
 	{
@@ -1634,6 +1643,11 @@ void CMiniDexed::ProcessSound (void)
 			m_GetChunkTimer.Stop ();
 		}
 	}
+
+	if (isPlaying() != currentPlayingState) {
+		// Update UI
+		m_UI.ParameterChanged();
+	}
 }
 
 #else	// #ifdef ARM_ALLOW_MULTI_CORE
@@ -1642,6 +1656,8 @@ void CMiniDexed::ProcessSound (void)
 {
 	assert (m_pSoundDevice);
 	assert (m_pConfig);
+
+	bool currentPlayingState = isPlaying();
 
 	unsigned nFrames = m_nQueueSizeFrames - m_pSoundDevice->GetQueueFramesAvail ();
 	if (nFrames >= m_nQueueSizeFrames/2)
@@ -1854,6 +1870,11 @@ void CMiniDexed::ProcessSound (void)
 		{
 			m_GetChunkTimer.Stop ();
 		}
+	}
+
+	if (isPlaying() != currentPlayingState) {
+		// Update UI
+		m_UI.ParameterChanged();
 	}
 }
 

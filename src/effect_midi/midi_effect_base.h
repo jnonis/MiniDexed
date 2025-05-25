@@ -50,6 +50,11 @@ public:
     {
     }
 
+    virtual bool isPlaying()
+    {
+        return false;
+    }
+
     virtual void setParameter(unsigned param, unsigned value)
     {
     }
@@ -94,6 +99,7 @@ public:
         }
         this->doProcess(len);
     }
+
 protected:
     bool bypass = false;
     float32_t samplerate;
