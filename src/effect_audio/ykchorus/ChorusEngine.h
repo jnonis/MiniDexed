@@ -106,8 +106,11 @@ public:
             dcBlock2L->tick(&resultL, 0.01f);
             dcBlock2R->tick(&resultR, 0.01f);
         }
-        *sampleL = *sampleL + resultL * 1.4f;
-        *sampleR = *sampleR + resultR * 1.4f;
+        // Disabled boost to avoid distortions
+        //*sampleL = *sampleL + resultL * 1.4f;
+        //*sampleR = *sampleR + resultR * 1.4f;
+        *sampleL = *sampleL + resultL;
+        *sampleR = *sampleR + resultR;
     }
 };
 
