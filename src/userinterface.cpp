@@ -96,7 +96,7 @@ bool CUserInterface::Initialize (void)
 			{
 				m_pST7789Display->SetRotation (m_pConfig->GetST7789Rotation());
 				bool bLargeFont = !(m_pConfig->GetST7789SmallFont());
-				m_pST7789 = new CST7789Device (m_pSPIMaster, m_pST7789Display, m_pConfig->GetLCDColumns (), m_pConfig->GetLCDRows (), bLargeFont, bLargeFont);
+				m_pST7789 = new CST7789Device (m_pSPIMaster, m_pST7789Display, m_pConfig->GetLCDColumns (), m_pConfig->GetLCDRows (), Font8x16, bLargeFont, bLargeFont);
 				if (m_pST7789->Initialize())
 				{
 					LOGDBG ("LCD: ST7789");
@@ -154,7 +154,8 @@ bool CUserInterface::Initialize (void)
 
 		m_pLCDBuffered = new CWriteBufferDevice (m_pLCD);
 		assert (m_pLCDBuffered);
-
+		// clear sceen and go to top left corner
+		LCDWrite ("\x1B[H\x1B[J");		// cursor home and clear screen
 		LCDWrite ("\x1B[?25l\x1B""d+");		// cursor off, autopage mode
 		LCDWrite ("MiniDexed\nLoading...");
 		m_pLCDBuffered->Update ();
@@ -211,6 +212,11 @@ void CUserInterface::Process (void)
 }
 
 void CUserInterface::ParameterChanged (void)
+{
+	m_Menu.EventHandler (CUIMenu::MenuEventUpdateParameter);
+}
+
+void CUserInterface::DisplayChanged (void)
 {
 	m_Menu.EventHandler (CUIMenu::MenuEventUpdate);
 }
@@ -396,7 +402,7 @@ void CUserInterface::UIButtonsEventStub (CUIButton::BtnEvent Event, void *pParam
 	pThis->UIButtonsEventHandler (Event);
 }
 
-void CUserInterface::UIMIDICmdHandler (unsigned nMidiCh, unsigned nMidiCmd, unsigned nMidiData1, unsigned nMidiData2)
+void CUserInterface::UIMIDICmdHandler (unsigned nMidiCh, unsigned nMidiType, unsigned nMidiData1, unsigned nMidiData2)
 {
 	if (m_nMIDIButtonCh == CMIDIDevice::Disabled)
 	{
@@ -411,7 +417,7 @@ void CUserInterface::UIMIDICmdHandler (unsigned nMidiCh, unsigned nMidiCmd, unsi
 	
 	if (m_pUIButtons)
 	{
-		m_pUIButtons->BtnMIDICmdHandler (nMidiCmd, nMidiData1, nMidiData2);
+		m_pUIButtons->BtnMIDICmdHandler (nMidiType, nMidiData1, nMidiData2);
 	}
 }
 
