@@ -39,13 +39,20 @@
 #include <circle/spimaster.h>
 #include <circle/multicore.h>
 #include <circle/sound/soundbasedevice.h>
+#include <circle/sched/scheduler.h>
+#include <circle/net/netsubsystem.h>
+#include <wlan/bcm4343.h>
+#include <wlan/hostap/wpa_supplicant/wpasupplicant.h>
+#include "net/mdnspublisher.h"
 #include <circle/spinlock.h>
 #include "common.h"
 #include "effect_mixer.hpp"
 #include "effect_compressor.h"
 #include "effects.h"
 #include "midi_effects.h"
-
+#include "udpmididevice.h"
+#include "net/ftpdaemon.h"
+ 
 class CMiniDexed
 #ifdef ARM_ALLOW_MULTI_CORE
 :	public CMultiCoreSupport
@@ -54,6 +61,7 @@ class CMiniDexed
 public:
 	CMiniDexed (CConfig *pConfig, CInterruptSystem *pInterrupt,
 		    CGPIOManager *pGPIOManager, CI2CMaster *pI2CMaster, CSPIMaster *pSPIMaster, FATFS *pFileSystem);
+	~CMiniDexed (void); // Add destructor
 
 	bool Initialize (void);
 
@@ -75,6 +83,7 @@ public:
 	void ProgramChange (unsigned nProgram, unsigned nTG);
 	void ProgramChangePerformance (unsigned nProgram);
 	void SetVolume (unsigned nVolume, unsigned nTG);
+	void SetExpression (unsigned nExpression, unsigned nTG);
 	void SetPan (unsigned nPan, unsigned nTG);			// 0 .. 127
 	void SetMasterTune (int nMasterTune, unsigned nTG);		// -99 .. 99
 	void SetCutoff (int nCutoff, unsigned nTG);			// 0 .. 99
@@ -92,6 +101,8 @@ public:
 	void keydown (int16_t pitch, uint8_t velocity, unsigned nTG);
 
 	void setSustain (bool sustain, unsigned nTG);
+	void setSostenuto (bool sostenuto, unsigned nTG);
+	void setHoldMode(bool holdmode, unsigned nTG);
 	void panic (uint8_t value, unsigned nTG);
 	void notesOff (uint8_t value, unsigned nTG);
 	void setModWheel (uint8_t value, unsigned nTG);
@@ -136,6 +147,7 @@ public:
 	void loadVoiceParameters(const uint8_t* data, uint8_t nTG);
 	void setVoiceDataElement(uint8_t data, uint8_t number, uint8_t nTG);
 	void getSysExVoiceDump(uint8_t* dest, uint8_t nTG);
+	void setOPMask(uint8_t uchOPMask, uint8_t nTG);
 
 	void setModController (unsigned controller, unsigned parameter, uint8_t value, uint8_t nTG);
 	unsigned getModController (unsigned controller, unsigned parameter, uint8_t nTG);
@@ -268,12 +280,17 @@ public:
 	bool DoSavePerformance (void);
 
 	void setMasterVolume (float32_t vol);
+	int GetMasterVolume127() const { return (int)(nMasterVolume >= 1.0f ? 127 : (nMasterVolume <= 0.0f ? 0 : sqrtf(nMasterVolume) * 127.0f)); }
+
+	bool InitNetwork();
+	void UpdateNetwork();
 
 private:
 	int16_t ApplyNoteLimits (int16_t pitch, unsigned nTG);	// returns < 0 to ignore note
 	uint8_t m_uchOPMask[CConfig::AllToneGenerators];
 	void LoadPerformanceParameters(void); 
 	void ProcessSound (void);
+	const char* GetNetworkDeviceShortName() const;
 
 #ifdef ARM_ALLOW_MULTI_CORE
 	enum TCoreStatus
@@ -302,6 +319,7 @@ private:
 	unsigned m_nVoiceBankIDMSBPerformance;
 	unsigned m_nProgram[CConfig::AllToneGenerators];
 	unsigned m_nVolume[CConfig::AllToneGenerators];
+	unsigned m_nExpression[CConfig::AllToneGenerators];
 	unsigned m_nPan[CConfig::AllToneGenerators];
 	int m_nMasterTune[CConfig::AllToneGenerators];
 	int m_nCutoff[CConfig::AllToneGenerators];
@@ -377,6 +395,21 @@ private:
 	CSpinLock m_SendFX2SpinLock;
 	CSpinLock m_MasterFXSpinLock;
 	
+	AudioStereoMixer<CConfig::AllToneGenerators>* reverb_send_mixer;
+
+	CSpinLock m_ReverbSpinLock;
+
+	// Network
+	CNetSubSystem* m_pNet;
+	CNetDevice* m_pNetDevice;
+	CBcm4343Device* m_WLAN; // Changed to pointer
+	CWPASupplicant* m_WPASupplicant; // Changed to pointer
+	bool m_bNetworkReady;
+	bool m_bNetworkInit;
+	CUDPMIDIDevice* m_UDPMIDI; // Changed to pointer
+	CFTPDaemon* m_pFTPDaemon;
+	CmDNSPublisher *m_pmDNSPublisher;
+
 	bool m_bSavePerformance;
 	bool m_bSavePerformanceNewFile;
 	bool m_bSetNewPerformance;

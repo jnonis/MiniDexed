@@ -39,6 +39,7 @@ public:
 	enum TMenuEvent
 	{
 		MenuEventUpdate,
+		MenuEventUpdateParameter,
 		MenuEventSelect,
 		MenuEventBack,
 		MenuEventHome,
@@ -97,6 +98,7 @@ private:
 	static void PerformanceMenu (CUIMenu *pUIMenu, TMenuEvent Event);
 	static void SavePerformanceNewFile (CUIMenu *pUIMenu, TMenuEvent Event);
 	static void EditPerformanceBankNumber (CUIMenu *pUIMenu, TMenuEvent Event);
+	static void EditMasterVolume (CUIMenu *pUIMenu, TMenuEvent Event);
 
 	static void MenuHandlerMidiFX (CUIMenu *pUIMenu, TMenuEvent Event);
 	static void EditMidiFX (CUIMenu *pUIMenu, TMenuEvent Event);

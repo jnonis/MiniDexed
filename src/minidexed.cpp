@@ -23,11 +23,19 @@
 #include <circle/sound/pwmsoundbasedevice.h>
 #include <circle/sound/i2ssoundbasedevice.h>
 #include <circle/sound/hdmisoundbasedevice.h>
+#include <circle/net/syslogdaemon.h>
+#include <circle/net/ipaddress.h>
 #include <circle/gpiopin.h>
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
 #include <chrono>
+#include "arm_float_to_q23.h"
+
+const char WLANFirmwarePath[] = "SD:firmware/";
+const char WLANConfigFile[]   = "SD:wpa_supplicant.conf";
+#define FTPUSERNAME "admin"
+#define FTPPASSWORD "admin"
 
 LOGMODULE ("minidexed");
 
@@ -52,6 +60,14 @@ CMiniDexed::CMiniDexed (CConfig *pConfig, CInterruptSystem *pInterrupt,
 	m_GetChunkTimer ("GetChunk",
 			 1000000U * pConfig->GetChunkSize ()/2 / pConfig->GetSampleRate ()),
 	m_bProfileEnabled (m_pConfig->GetProfileEnabled ()),
+	m_pNet(nullptr),
+	m_pNetDevice(nullptr),
+	m_WLAN(nullptr),
+	m_WPASupplicant(nullptr),
+	m_bNetworkReady(false),
+	m_bNetworkInit(false),
+	m_UDPMIDI(nullptr),
+	m_pmDNSPublisher (nullptr),
 	m_bSavePerformance (false),
 	m_bSavePerformanceNewFile (false),
 	m_bSetNewPerformance (false),
@@ -77,6 +93,7 @@ CMiniDexed::CMiniDexed (CConfig *pConfig, CInterruptSystem *pInterrupt,
 		m_nVoiceBankIDMSB[i] = 0;
 		m_nProgram[i] = 0;
 		m_nVolume[i] = 100;
+		m_nExpression[i] = 127;
 		m_nPan[i] = 64;
 		m_nMasterTune[i] = 0;
 		m_nCutoff[i] = 99;
@@ -234,7 +251,8 @@ CMiniDexed::CMiniDexed (CConfig *pConfig, CInterruptSystem *pInterrupt,
 	}
 #endif
 
-	setMasterVolume(1.0);
+	float masterVolNorm = (float)(pConfig->GetMasterVolume()) / 127.0f;
+	setMasterVolume(masterVolNorm);
 
 	// BEGIN setup tg_mixer
 	tg_mixer = new AudioStereoMixer<CConfig::AllToneGenerators>(pConfig->GetChunkSize()/2);
@@ -257,8 +275,18 @@ CMiniDexed::CMiniDexed (CConfig *pConfig, CInterruptSystem *pInterrupt,
 	SetParameter (ParameterPerformanceBank, 0);
 };
 
+CMiniDexed::~CMiniDexed (void)
+{
+	delete m_WLAN;
+	delete m_WPASupplicant;
+	delete m_UDPMIDI;
+	delete m_pFTPDaemon;
+	delete m_pmDNSPublisher;
+}
+
 bool CMiniDexed::Initialize (void)
 {
+	LOGNOTE("CMiniDexed::Initialize called");
 	assert (m_pConfig);
 	assert (m_pSoundDevice);
 
@@ -295,6 +323,7 @@ bool CMiniDexed::Initialize (void)
 		assert (m_pTG[i]);
 
 		SetVolume (100, i);
+		SetExpression (127, i);
 		ProgramChange (0, i);
 
 		m_pTG[i]->setTranspose (24);
@@ -346,7 +375,7 @@ bool CMiniDexed::Initialize (void)
 		return false;
 	}
 
-	m_pSoundDevice->SetWriteFormat (SoundFormatSigned16, Channels);
+	m_pSoundDevice->SetWriteFormat (SoundFormatSigned24_32, Channels);
 
 	m_nQueueSizeFrames = m_pSoundDevice->GetQueueSizeFrames ();
 
@@ -358,21 +387,27 @@ bool CMiniDexed::Initialize (void)
 	{
 		return false;
 	}
+
+	InitNetwork();  // returns bool but we continue even if something goes wrong
+	LOGNOTE("CMiniDexed::Initialize: InitNetwork() called");
 #endif
-	
+
 	return true;
 }
 
 void CMiniDexed::Process (bool bPlugAndPlayUpdated)
 {
+	CScheduler* const pScheduler = CScheduler::Get();
 #ifndef ARM_ALLOW_MULTI_CORE
 	ProcessSound ();
+	pScheduler->Yield();
 #endif
 
 	for (unsigned i = 0; i < CConfig::MaxUSBMIDIDevices; i++)
 	{
 		assert (m_pMIDIKeyboard[i]);
 		m_pMIDIKeyboard[i]->Process (bPlugAndPlayUpdated);
+		pScheduler->Yield();
 	}
 
 	m_PCKeyboard.Process (bPlugAndPlayUpdated);
@@ -380,6 +415,7 @@ void CMiniDexed::Process (bool bPlugAndPlayUpdated)
 	if (m_bUseSerial)
 	{
 		m_SerialMIDI.Process ();
+		pScheduler->Yield();
 	}
 
 	m_UI.Process ();
@@ -389,12 +425,14 @@ void CMiniDexed::Process (bool bPlugAndPlayUpdated)
 		DoSavePerformance ();
 
 		m_bSavePerformance = false;
+		pScheduler->Yield();
 	}
 
 	if (m_bSavePerformanceNewFile)
 	{
 		DoSavePerformanceNewFile ();
 		m_bSavePerformanceNewFile = false;
+		pScheduler->Yield();
 	}
 	
 	if (m_bSetNewPerformanceBank && !m_bLoadPerformanceBusy && !m_bLoadPerformanceBankBusy)
@@ -412,6 +450,7 @@ void CMiniDexed::Process (bool bPlugAndPlayUpdated)
 		{
 			DoSetFirstPerformance();
 		}
+		pScheduler->Yield();
 	}
 	
 	if (m_bSetNewPerformance && !m_bSetNewPerformanceBank && !m_bLoadPerformanceBusy && !m_bLoadPerformanceBankBusy)
@@ -421,18 +460,26 @@ void CMiniDexed::Process (bool bPlugAndPlayUpdated)
 		{
 			m_bSetNewPerformance = false;
 		}
+		pScheduler->Yield();
 	}
 	
 	if(m_bDeletePerformance)
 	{
 		DoDeletePerformance ();
 		m_bDeletePerformance = false;
+		pScheduler->Yield();
 	}
 		
 	if (m_bProfileEnabled)
 	{
 		m_GetChunkTimer.Dump ();
+		pScheduler->Yield();
 	}
+	if (m_pNet) {
+		UpdateNetwork();
+	}
+	// Allow other tasks to run
+	pScheduler->Yield();
 }
 
 #ifdef ARM_ALLOW_MULTI_CORE
@@ -642,6 +689,7 @@ void CMiniDexed::ProgramChange (unsigned nProgram, unsigned nTG)
 
 	assert (m_pTG[nTG]);
 	m_pTG[nTG]->loadVoiceParameters (Buffer);
+	setOPMask(0b111111, nTG);
 
 	if (m_pConfig->GetMIDIAutoVoiceDumpOnPC())
 	{
@@ -649,7 +697,7 @@ void CMiniDexed::ProgramChange (unsigned nProgram, unsigned nTG)
 		// MIDI channel configured for this TG
 		if (m_nMIDIChannel[nTG] < CMIDIDevice::Channels)
 		{
-			m_SerialMIDI.SendSystemExclusiveVoice(nProgram,0,nTG);
+			m_SerialMIDI.SendSystemExclusiveVoice(nProgram, m_SerialMIDI.GetDeviceName(), 0, nTG);
 		}
 	}
 
@@ -679,9 +727,26 @@ void CMiniDexed::SetVolume (unsigned nVolume, unsigned nTG)
 	m_nVolume[nTG] = nVolume;
 
 	assert (m_pTG[nTG]);
-	m_pTG[nTG]->setGain (nVolume / 127.0f);
+	m_pTG[nTG]->setGain ((m_nVolume[nTG] * m_nExpression[nTG]) / (127.0f * 127.0f));
 
 	m_UI.ParameterChanged ();
+}
+
+void CMiniDexed::SetExpression (unsigned nExpression, unsigned nTG)
+{
+	nExpression=constrain((int)nExpression,0,127);
+
+	assert (nTG < CConfig::AllToneGenerators);
+	if (nTG >= m_nToneGenerators) return;  // Not an active TG
+
+	m_nExpression[nTG] = nExpression;
+
+	assert (m_pTG[nTG]);
+	m_pTG[nTG]->setGain ((m_nVolume[nTG] * m_nExpression[nTG]) / (127.0f * 127.0f));
+
+	// Expression is a "live performance" parameter only set
+	// via MIDI and not via the UI.
+	//m_UI.ParameterChanged ();
 }
 
 void CMiniDexed::SetPan (unsigned nPan, unsigned nTG)
@@ -953,6 +1018,10 @@ void CMiniDexed::SetMIDIChannel (uint8_t uchChannel, unsigned nTG)
 	{
 		m_SerialMIDI.SetChannel (uchChannel, nTG);
 	}
+	if (m_UDPMIDI)
+	{
+		m_UDPMIDI->SetChannel (uchChannel, nTG);
+	}
 
 #ifdef ARM_ALLOW_MULTI_CORE
 /* This doesn't appear to be used anywhere...
@@ -967,7 +1036,7 @@ void CMiniDexed::SetMIDIChannel (uint8_t uchChannel, unsigned nTG)
 
 	assert (nActiveTGs <= 8);
 	static const unsigned Log2[] = {0, 0, 1, 2, 2, 3, 3, 3, 3};
-	m_nActiveTGsLog2 = Log2[nActiveTGs];
+		m_nActiveTGsLog2 = Log2[nActiveTGs];
 */
 #endif
 
@@ -994,7 +1063,7 @@ void CMiniDexed::setTempo(unsigned nValue)
 	}
 
 	// Update UI
-	m_UI.ParameterChanged();
+	m_UI.DisplayChanged();
 }
 
 
@@ -1114,6 +1183,24 @@ void CMiniDexed::setSustain(bool sustain, unsigned nTG)
 
 	assert (m_pTG[nTG]);
 	m_pTG[nTG]->setSustain (sustain);
+}
+
+void CMiniDexed::setSostenuto(bool sostenuto, unsigned nTG)
+{
+	assert (nTG < CConfig::AllToneGenerators);
+	if (nTG >= m_nToneGenerators) return;  // Not an active TG
+
+	assert (m_pTG[nTG]);
+	m_pTG[nTG]->setSostenuto (sostenuto);
+}
+
+void CMiniDexed::setHoldMode(bool holdmode, unsigned nTG)
+{
+	assert (nTG < CConfig::AllToneGenerators);
+	if (nTG >= m_nToneGenerators) return;  // Not an active TG
+
+	assert (m_pTG[nTG]);
+	m_pTG[nTG]->setHold (holdmode);
 }
 
 void CMiniDexed::panic(uint8_t value, unsigned nTG)
@@ -1319,6 +1406,7 @@ void CMiniDexed::SetTGParameter (TTGParameter Parameter, int nValue, unsigned nT
 	case TGParameterATAmplitude:				setModController(3, 2, nValue, nTG); break;
 	case TGParameterATEGBias:					setModController(3, 3, nValue, nTG); break;
 	
+	
 	case TGParameterMIDIChannel:
 		assert (0 <= nValue && nValue <= 255);
 		SetMIDIChannel ((uint8_t) nValue, nTG);
@@ -1472,23 +1560,22 @@ void CMiniDexed::SetVoiceParameter (uint8_t uchOffset, uint8_t uchValue, unsigne
 
 	if (nOP < 6)
 	{
+		nOP = 5 - nOP;		// OPs are in reverse order
+
 		if (uchOffset == DEXED_OP_ENABLE)
 		{
 			if (uchValue)
 			{
-				m_uchOPMask[nTG] |= 1 << nOP;
+				setOPMask(m_uchOPMask[nTG] | 1 << nOP, nTG);
 			}
 			else
 			{
-				m_uchOPMask[nTG] &= ~(1 << nOP);
+				setOPMask(m_uchOPMask[nTG] & ~(1 << nOP), nTG);
 			}
 
-			m_pTG[nTG]->setOPAll (m_uchOPMask[nTG]);
 
 			return;
-		}
-
-		nOP = 5 - nOP;		// OPs are in reverse order
+		}		
 	}
 
 	uchOffset += nOP * 21;
@@ -1507,12 +1594,12 @@ uint8_t CMiniDexed::GetVoiceParameter (uint8_t uchOffset, unsigned nOP, unsigned
 
 	if (nOP < 6)
 	{
+		nOP = 5 - nOP;		// OPs are in reverse order
+
 		if (uchOffset == DEXED_OP_ENABLE)
 		{
 			return !!(m_uchOPMask[nTG] & (1 << nOP));
 		}
-
-		nOP = 5 - nOP;		// OPs are in reverse order
 	}
 
 	uchOffset += nOP * 21;
@@ -1531,7 +1618,7 @@ std::string CMiniDexed::GetVoiceName (unsigned nTG)
 	if (nTG < m_nToneGenerators)
 	{
 		assert (m_pTG[nTG]);
-		m_pTG[nTG]->setName (VoiceName);
+		m_pTG[nTG]->getName (VoiceName);
 	}
 	std::string Result (VoiceName);
 	return Result;
@@ -1553,86 +1640,102 @@ void CMiniDexed::ProcessSound (void)
 			m_GetChunkTimer.Start ();
 		}
 
-		uint8_t indexL=0, indexR=1;
-		float32_t SampleBuffer[2][nFrames];
+		int32_t tmp_int[nFrames*2];
 
-		m_MidiArpSpinLock[0]->Acquire();
-		m_MidiArp[0]->process(nFrames);
-		m_MidiArpSpinLock[0]->Release();
-		
-		m_pTG[0]->getSamples (SampleBuffer[indexL], nFrames);
-		
-		if (m_pConfig->GetFXEnabled())
+		if(nMasterVolume > 0.0)
 		{
-			m_InsertFXSpinLock[0]->Acquire();
-			m_InsertFX[0]->process(SampleBuffer[indexL], SampleBuffer[indexL], SampleBuffer[indexL], SampleBuffer[indexR], nFrames);
-			m_InsertFXSpinLock[0]->Release();
+			uint8_t indexL=0, indexR=1;
+			float32_t SampleBuffer[2][nFrames];
 
-			send_fx1_mixer->doAddMix(0, SampleBuffer[indexL], SampleBuffer[indexR]);
-			send_fx2_mixer->doAddMix(0, SampleBuffer[indexL], SampleBuffer[indexR]);
-
-			// BEGIN adding send fx 1
-			float32_t SendFXOutputBuffer[2][nFrames];
-			float32_t SendFXMixBuffer[2][nFrames];
-			arm_fill_f32(0.0f, SendFXMixBuffer[indexR], nFrames);
-			arm_fill_f32(0.0f, SendFXMixBuffer[indexL], nFrames);
+			m_MidiArpSpinLock[0]->Acquire();
+			m_MidiArp[0]->process(nFrames);
+			m_MidiArpSpinLock[0]->Release();
 			
-			m_SendFX1SpinLock.Acquire ();
-			send_fx1_mixer->getMix(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR]);
-			m_SendFX1->process(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR], SendFXOutputBuffer[indexL], SendFXOutputBuffer[indexR], nFrames);
-			m_SendFX1SpinLock.Release ();
+			m_pTG[0]->getSamples (SampleBuffer[indexL], nFrames);
 			
-			// send to FX 2
-			send_fx2_mixer->doAddMix(CConfig::SendFX2MixerChannels - 1, SendFXMixBuffer[indexL], SendFXMixBuffer[indexR]);
+			if (m_pConfig->GetFXEnabled())
+			{
+				m_InsertFXSpinLock[0]->Acquire();
+				m_InsertFX[0]->process(SampleBuffer[indexL], SampleBuffer[indexL], SampleBuffer[indexL], SampleBuffer[indexR], nFrames);
+				m_InsertFXSpinLock[0]->Release();
 
-			// scale down and add left send fx buffer by send fx level 
-			arm_scale_f32(SendFXOutputBuffer[indexL], m_SendFX1Level, SendFXOutputBuffer[indexL], nFrames);
-			arm_add_f32(SampleBuffer[indexL], SendFXOutputBuffer[indexL], SampleBuffer[indexL], nFrames);
-			// scale down and add right send fx buffer by send fx level 
-			arm_scale_f32(SendFXOutputBuffer[indexR], m_SendFX1Level, SendFXOutputBuffer[indexR], nFrames);
-			arm_add_f32(SampleBuffer[indexR], SendFXOutputBuffer[indexR], SampleBuffer[indexR], nFrames);
-			// END adding send fx 1
+				send_fx1_mixer->doAddMix(0, SampleBuffer[indexL], SampleBuffer[indexR]);
+				send_fx2_mixer->doAddMix(0, SampleBuffer[indexL], SampleBuffer[indexR]);
 
-			// BEGIN adding send fx 2
-			m_SendFX2SpinLock.Acquire ();
-			send_fx2_mixer->getMix(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR]);
-			m_SendFX2->process(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR], SendFXOutputBuffer[indexL], SendFXOutputBuffer[indexR], nFrames);
-			m_SendFX2SpinLock.Release ();
+				// BEGIN adding send fx 1
+				float32_t SendFXOutputBuffer[2][nFrames];
+				float32_t SendFXMixBuffer[2][nFrames];
+				arm_fill_f32(0.0f, SendFXMixBuffer[indexR], nFrames);
+				arm_fill_f32(0.0f, SendFXMixBuffer[indexL], nFrames);
+				
+				m_SendFX1SpinLock.Acquire ();
+				send_fx1_mixer->getMix(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR]);
+				m_SendFX1->process(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR], SendFXOutputBuffer[indexL], SendFXOutputBuffer[indexR], nFrames);
+				m_SendFX1SpinLock.Release ();
+				
+				// send to FX 2
+				send_fx2_mixer->doAddMix(CConfig::SendFX2MixerChannels - 1, SendFXMixBuffer[indexL], SendFXMixBuffer[indexR]);
 
-			// scale down and add left send fx buffer by send fx level 
-			arm_scale_f32(SendFXOutputBuffer[indexL], m_SendFX2Level, SendFXOutputBuffer[indexL], nFrames);
-			arm_add_f32(SampleBuffer[indexL], SendFXOutputBuffer[indexL], SampleBuffer[indexL], nFrames);
-			// scale down and add right send fx buffer by send fx level 
-			arm_scale_f32(SendFXOutputBuffer[indexR], m_SendFX2Level, SendFXOutputBuffer[indexR], nFrames);
-			arm_add_f32(SampleBuffer[indexR], SendFXOutputBuffer[indexR], SampleBuffer[indexR], nFrames);
-			// END adding send fx 2
+				// scale down and add left send fx buffer by send fx level 
+				arm_scale_f32(SendFXOutputBuffer[indexL], m_SendFX1Level, SendFXOutputBuffer[indexL], nFrames);
+				arm_add_f32(SampleBuffer[indexL], SendFXOutputBuffer[indexL], SampleBuffer[indexL], nFrames);
+				// scale down and add right send fx buffer by send fx level 
+				arm_scale_f32(SendFXOutputBuffer[indexR], m_SendFX1Level, SendFXOutputBuffer[indexR], nFrames);
+				arm_add_f32(SampleBuffer[indexR], SendFXOutputBuffer[indexR], SampleBuffer[indexR], nFrames);
+				// END adding send fx 1
 
-			m_MasterFXSpinLock.Acquire ();
-			m_MasterFX->process(SampleBuffer[indexL], SampleBuffer[indexR], SampleBuffer[indexL], SampleBuffer[indexR], nFrames);
-			m_MasterFXSpinLock.Release ();
+				// BEGIN adding send fx 2
+				m_SendFX2SpinLock.Acquire ();
+				send_fx2_mixer->getMix(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR]);
+				m_SendFX2->process(SendFXMixBuffer[indexL], SendFXMixBuffer[indexR], SendFXOutputBuffer[indexL], SendFXOutputBuffer[indexR], nFrames);
+				m_SendFX2SpinLock.Release ();
+
+				// scale down and add left send fx buffer by send fx level 
+				arm_scale_f32(SendFXOutputBuffer[indexL], m_SendFX2Level, SendFXOutputBuffer[indexL], nFrames);
+				arm_add_f32(SampleBuffer[indexL], SendFXOutputBuffer[indexL], SampleBuffer[indexL], nFrames);
+				// scale down and add right send fx buffer by send fx level 
+				arm_scale_f32(SendFXOutputBuffer[indexR], m_SendFX2Level, SendFXOutputBuffer[indexR], nFrames);
+				arm_add_f32(SampleBuffer[indexR], SendFXOutputBuffer[indexR], SampleBuffer[indexR], nFrames);
+				// END adding send fx 2
+
+				m_MasterFXSpinLock.Acquire ();
+				m_MasterFX->process(SampleBuffer[indexL], SampleBuffer[indexR], SampleBuffer[indexL], SampleBuffer[indexR], nFrames);
+				m_MasterFXSpinLock.Release ();
+			}
+			else
+			{
+				memcpy(SampleBuffer[indexR], SampleBuffer[indexL], nFrames * sizeof(float32_t));
+			}
+
+			// swap stereo channels if needed prior to writing back out
+			if (m_bChannelsSwapped)
+			{
+				indexL=1;
+				indexR=0;
+			}
+
+			// Convert dual float array (left, right) to single int16 array (left/right)
+			float32_t tmp_float[nFrames*2];
+			for(uint16_t i=0; i<nFrames;i++)
+			{
+				if(nMasterVolume >0.0 && nMasterVolume <1.0)
+				{
+					tmp_float[i*2]=SampleBuffer[indexL][i] * nMasterVolume;
+					tmp_float[(i*2)+1]=SampleBuffer[indexR][i] * nMasterVolume;
+				}
+				else if(nMasterVolume == 1.0)
+				{
+					tmp_float[i*2]=SampleBuffer[indexL][i];
+					tmp_float[(i*2)+1]=SampleBuffer[indexR][i];
+				}
+			}
+			arm_float_to_q23(tmp_float, tmp_int, nFrames * 2);
 		}
 		else
 		{
-			memcpy(SampleBuffer[indexR], SampleBuffer[indexL], nFrames * sizeof(float32_t));
+			arm_fill_q31(0, tmp_int, nFrames * 2);
 		}
-
-		// swap stereo channels if needed prior to writing back out
-		if (m_bChannelsSwapped)
-		{
-			indexL=1;
-			indexR=0;
-		}
-
-		// Convert dual float array (left, right) to single int16 array (left/right)
-		float32_t tmp_float[nFrames*2];
-		int16_t tmp_int[nFrames*2];
-		for(uint16_t i=0; i<nFrames;i++)
-		{
-			tmp_float[i*2]=SampleBuffer[indexL][i];
-			tmp_float[(i*2)+1]=SampleBuffer[indexR][i];
-		}
-		arm_float_to_q15(tmp_float,tmp_int,nFrames*2);
-
+		
 		if (m_pSoundDevice->Write (tmp_int, sizeof(tmp_int)) != (int) sizeof(tmp_int))
 		{
 			LOGERR ("Sound data dropped");
@@ -1646,7 +1749,7 @@ void CMiniDexed::ProcessSound (void)
 
 	if (isPlaying() != currentPlayingState) {
 		// Update UI
-		m_UI.ParameterChanged();
+		m_UI.DisplayChanged();
 	}
 }
 
@@ -1662,6 +1765,10 @@ void CMiniDexed::ProcessSound (void)
 	unsigned nFrames = m_nQueueSizeFrames - m_pSoundDevice->GetQueueFramesAvail ();
 	if (nFrames >= m_nQueueSizeFrames/2)
 	{
+		// only process the minimum number of frames (== chunksize / 2)
+		// as the tg_mixer cannot process more
+		nFrames = m_nQueueSizeFrames / 2;
+
 		if (m_bProfileEnabled)
 		{
 			m_GetChunkTimer.Start ();
@@ -1721,7 +1828,7 @@ void CMiniDexed::ProcessSound (void)
 			// Note: one TG per audio channel; output=mono; no processing.
 			const int Channels = 8;  // One TG per channel
 			float32_t tmp_float[nFrames*Channels];
-			int16_t tmp_int[nFrames*Channels];
+			int32_t tmp_int[nFrames*Channels];
 
 			if(nMasterVolume > 0.0)
 			{
@@ -1743,13 +1850,22 @@ void CMiniDexed::ProcessSound (void)
 						}
 					}
 				}
-				arm_float_to_q15(tmp_float,tmp_int,nFrames*Channels);
+				arm_float_to_q23(tmp_float,tmp_int,nFrames*Channels);
 			}
 			else
 			{
-				arm_fill_q15(0, tmp_int, nFrames*Channels);
+				arm_fill_q31(0, tmp_int, nFrames*Channels);
 			}
 
+			// Prevent PCM510x analog mute from kicking in
+			for (uint8_t tg = 0; tg < Channels; tg++) 
+			{
+				if (tmp_int[(nFrames - 1) * Channels + tg] == 0)
+				{
+					tmp_int[(nFrames - 1) * Channels + tg]++;
+				}
+			}
+			
 			if (m_pSoundDevice->Write (tmp_int, sizeof(tmp_int)) != (int) sizeof(tmp_int))
 			{
 				LOGERR ("Sound data dropped");
@@ -1762,7 +1878,7 @@ void CMiniDexed::ProcessSound (void)
 
 			// BEGIN TG mixing
 			float32_t tmp_float[nFrames*2];
-			int16_t tmp_int[nFrames*2];
+			int32_t tmp_int[nFrames*2];
 
 			if(nMasterVolume > 0.0)
 			{
@@ -1853,13 +1969,19 @@ void CMiniDexed::ProcessSound (void)
 						tmp_float[(i*2)+1]=SampleBuffer[indexR][i];
 					}
 				}
-				arm_float_to_q15(tmp_float,tmp_int,nFrames*2);
+				arm_float_to_q23(tmp_float,tmp_int,nFrames*2);
 			}
 			else
 			{
-				arm_fill_q15(0, tmp_int, nFrames * 2);
+				arm_fill_q31(0, tmp_int, nFrames * 2);
 			}
 
+			// Prevent PCM510x analog mute from kicking in
+			if (tmp_int[nFrames * 2 - 1] == 0)
+			{
+				tmp_int[nFrames * 2 - 1]++;
+			}
+			
 			if (m_pSoundDevice->Write (tmp_int, sizeof(tmp_int)) != (int) sizeof(tmp_int))
 			{
 				LOGERR ("Sound data dropped");
@@ -1874,7 +1996,7 @@ void CMiniDexed::ProcessSound (void)
 
 	if (isPlaying() != currentPlayingState) {
 		// Update UI
-		m_UI.ParameterChanged();
+		m_UI.DisplayChanged();
 	}
 }
 
@@ -2168,7 +2290,7 @@ void CMiniDexed::setBreathControllerTarget(uint8_t target, uint8_t nTG)
 
 	assert (m_pTG[nTG]);
 
-	m_nBreathControlTarget[nTG]=target;
+	m_nBreathControlTarget[nTG] = target;
 
 	m_pTG[nTG]->setBreathControllerTarget(constrain(target, 0, 7));
 	m_pTG[nTG]->ControllersRefresh();
@@ -2197,7 +2319,7 @@ void CMiniDexed::setAftertouchTarget(uint8_t target, uint8_t nTG)
 
 	assert (m_pTG[nTG]);
 
-	m_nAftertouchTarget[nTG]=target;
+	m_nAftertouchTarget[nTG] = target;
 
 	m_pTG[nTG]->setAftertouchTarget(constrain(target, 0, 7));
 	m_pTG[nTG]->ControllersRefresh();
@@ -2224,6 +2346,8 @@ void CMiniDexed::loadVoiceParameters(const uint8_t* data, uint8_t nTG)
 
 	m_pTG[nTG]->loadVoiceParameters(&voice[6]);
 	m_pTG[nTG]->doRefreshVoice();
+	setOPMask(0b111111, nTG);
+
 	m_UI.ParameterChanged ();
 }
 
@@ -2235,7 +2359,6 @@ void CMiniDexed::setVoiceDataElement(uint8_t data, uint8_t number, uint8_t nTG)
 	assert (m_pTG[nTG]);
 
 	m_pTG[nTG]->setVoiceDataElement(constrain(data, 0, 155),constrain(number, 0, 99));
-	//m_pTG[nTG]->doRefreshVoice();
 	m_UI.ParameterChanged ();
 }
 
@@ -2281,14 +2404,23 @@ void CMiniDexed::getSysExVoiceDump(uint8_t* dest, uint8_t nTG)
 	dest[162] = 0xF7; // SysEx end
 }
 
-void CMiniDexed::setMasterVolume (float32_t vol)
+void CMiniDexed::setOPMask(uint8_t uchOPMask, uint8_t nTG)
 {
-	if(vol < 0.0)
-		vol = 0.0;
-	else if(vol > 1.0)
-		vol = 1.0;
+	m_uchOPMask[nTG] = uchOPMask;
+	m_pTG[nTG]->setOPAll (m_uchOPMask[nTG]);
+}
 
-	nMasterVolume=vol;
+void CMiniDexed::setMasterVolume(float32_t vol)
+{
+    if (vol < 0.0)
+        vol = 0.0;
+    else if (vol > 1.0)
+        vol = 1.0;
+
+    // Apply logarithmic scaling to match perceived loudness
+    vol = powf(vol, 2.0f);
+
+    nMasterVolume = vol;
 }
 
 std::string CMiniDexed::GetPerformanceFileName(unsigned nID)
@@ -2466,6 +2598,7 @@ void CMiniDexed::LoadPerformanceParameters(void)
 			{
 			uint8_t* tVoiceData = m_PerformanceConfig.GetVoiceDataFromTxt(nTG);
 			m_pTG[nTG]->loadVoiceParameters(tVoiceData); 
+			setOPMask(0b111111, nTG);
 			}
 			setMonoMode(m_PerformanceConfig.GetMonoMode(nTG) ? 1 : 0, nTG); 
 			SetSendFX1 (m_PerformanceConfig.GetSendFX1Send (nTG), nTG);
@@ -2506,6 +2639,8 @@ void CMiniDexed::LoadPerformanceParameters(void)
 		pParamsMaster.shrink_to_fit();
 
 		SetParameter (ParameterTempo, m_PerformanceConfig.GetTempo ());
+		
+		m_UI.DisplayChanged ();
 }
 
 std::string CMiniDexed::GetNewPerformanceDefaultName(void)	
@@ -2537,7 +2672,7 @@ void CMiniDexed::SetVoiceName (const std::string &VoiceName, unsigned nTG)
 	char Name[11];
 	strncpy(Name, VoiceName.c_str(),10);
 	Name[10] = '\0';
-	m_pTG[nTG]->getName (Name);
+	m_pTG[nTG]->setName (Name);
 }
 
 bool CMiniDexed::DeletePerformance(unsigned nID)
@@ -2708,5 +2843,219 @@ unsigned CMiniDexed::getModController (unsigned controller, unsigned parameter, 
 		break;
 	}
 	
+}
+
+void CMiniDexed::UpdateNetwork()
+{
+	if (!m_pNet) {
+		LOGNOTE("CMiniDexed::UpdateNetwork: m_pNet is nullptr, returning early");
+		return;
+	}
+
+	bool bNetIsRunning = m_pNet->IsRunning();
+	if (m_pNetDevice->GetType() == NetDeviceTypeEthernet)
+		bNetIsRunning &= m_pNetDevice->IsLinkUp();
+	else if (m_pNetDevice->GetType() == NetDeviceTypeWLAN)
+		bNetIsRunning &= (m_WPASupplicant && m_WPASupplicant->IsConnected());
+	
+	if (!m_bNetworkInit && bNetIsRunning)
+	{
+		LOGNOTE("CMiniDexed::UpdateNetwork: Network became ready, initializing network services");
+		m_bNetworkInit = true;
+		CString IPString;
+		m_pNet->GetConfig()->GetIPAddress()->Format(&IPString);
+
+		if (m_UDPMIDI)
+		{
+			m_UDPMIDI->Initialize();
+		}
+
+		if (m_pConfig->GetNetworkFTPEnabled()) {
+			m_pFTPDaemon = new CFTPDaemon(FTPUSERNAME, FTPPASSWORD, m_pmDNSPublisher, m_pConfig);
+
+			if (!m_pFTPDaemon->Initialize())
+			{
+				LOGERR("Failed to init FTP daemon");
+				delete m_pFTPDaemon;
+				m_pFTPDaemon = nullptr;
+			}
+			else 
+			{
+				LOGNOTE("FTP daemon initialized");
+			}
+		} else {
+			LOGNOTE("FTP daemon not started (NetworkFTPEnabled=0)");
+		}
+
+		m_UI.DisplayWrite (IPString, "", "TG1", 0, 1);
+
+		m_pmDNSPublisher = new CmDNSPublisher (m_pNet);
+		assert (m_pmDNSPublisher);
+		
+		if (!m_pmDNSPublisher->PublishService (m_pConfig->GetNetworkHostname(), CmDNSPublisher::ServiceTypeAppleMIDI,
+						     5004))
+		{
+			LOGPANIC ("Cannot publish mdns service");
+		}
+
+		static constexpr const char *ServiceTypeFTP = "_ftp._tcp";
+		static const char *ftpTxt[] = { "app=MiniDexed", nullptr };
+		if (!m_pmDNSPublisher->PublishService (m_pConfig->GetNetworkHostname(), ServiceTypeFTP, 21, ftpTxt))
+		{
+			LOGPANIC ("Cannot publish mdns service");
+		}
+
+		if (m_pConfig->GetSyslogEnabled())
+		{
+			LOGNOTE ("Syslog server is enabled in configuration");
+			CIPAddress ServerIP = m_pConfig->GetNetworkSyslogServerIPAddress();
+			if (ServerIP.IsSet () && !ServerIP.IsNull ())
+			{
+				static const u16 usServerPort = 8514;
+				CString IPString;
+				ServerIP.Format (&IPString);
+				LOGNOTE ("Sending log messages to syslog server %s:%u",
+					(const char *) IPString, (unsigned) usServerPort);
+
+				new CSysLogDaemon (m_pNet, ServerIP, usServerPort);
+			}
+			else
+			{
+				LOGNOTE ("Syslog server IP not set");
+			}	
+		}
+		else
+		{
+			LOGNOTE ("Syslog server is not enabled in configuration");
+		}
+		m_bNetworkReady = true;
+	}
+
+	if (m_bNetworkReady && !bNetIsRunning)
+	{
+		LOGNOTE("CMiniDexed::UpdateNetwork: Network disconnected");
+		m_bNetworkReady = false;
+		m_pmDNSPublisher->UnpublishService (m_pConfig->GetNetworkHostname());
+		LOGNOTE("Network disconnected.");
+	}
+	else if (!m_bNetworkReady && bNetIsRunning)
+	{
+		LOGNOTE("CMiniDexed::UpdateNetwork: Network connection reestablished");
+		m_bNetworkReady = true;
+		
+		if (!m_pmDNSPublisher->PublishService (m_pConfig->GetNetworkHostname(), CmDNSPublisher::ServiceTypeAppleMIDI,
+						     5004))
+		{
+			LOGPANIC ("Cannot publish mdns service");
+		}
+
+		static constexpr const char *ServiceTypeFTP = "_ftp._tcp";
+		static const char *ftpTxt[] = { "app=MiniDexed", nullptr };
+		if (!m_pmDNSPublisher->PublishService (m_pConfig->GetNetworkHostname(), ServiceTypeFTP, 21, ftpTxt))
+		{
+			LOGPANIC ("Cannot publish mdns service");
+		}
+		
+		m_bNetworkReady = true;
+		
+		LOGNOTE("Network connection reestablished.");
+
+	}
+}
+
+bool CMiniDexed::InitNetwork()
+{
+	LOGNOTE("CMiniDexed::InitNetwork called");
+	assert(m_pNet == nullptr);
+
+	TNetDeviceType NetDeviceType = NetDeviceTypeUnknown;
+
+	if (m_pConfig->GetNetworkEnabled())
+	{
+		LOGNOTE("CMiniDexed::InitNetwork: Network is enabled in configuration");
+
+		LOGNOTE("CMiniDexed::InitNetwork: Network type set in configuration: %s", m_pConfig->GetNetworkType());
+
+		if (strcmp(m_pConfig->GetNetworkType(), "wlan") == 0)
+		{
+			LOGNOTE("CMiniDexed::InitNetwork: Initializing WLAN");
+			NetDeviceType = NetDeviceTypeWLAN;
+			m_WLAN = new CBcm4343Device(WLANFirmwarePath);
+			if (m_WLAN && m_WLAN->Initialize())
+			{
+				LOGNOTE("CMiniDexed::InitNetwork: WLAN initialized");
+			}
+			else
+			{
+				LOGERR("CMiniDexed::InitNetwork: Failed to initialize WLAN, maybe firmware files are missing?");
+				delete m_WLAN; m_WLAN = nullptr;
+				return false;
+			}
+		}
+		else if (strcmp(m_pConfig->GetNetworkType(), "ethernet") == 0)
+		{
+			LOGNOTE("CMiniDexed::InitNetwork: Initializing Ethernet");
+			NetDeviceType = NetDeviceTypeEthernet;
+		}
+		else 
+		{
+			LOGERR("CMiniDexed::InitNetwork: Network type is not set, please check your minidexed configuration file.");
+			NetDeviceType = NetDeviceTypeUnknown;
+		}
+		
+		if (NetDeviceType != NetDeviceTypeUnknown)
+		{
+			LOGNOTE("CMiniDexed::InitNetwork: Creating CNetSubSystem");
+			if (m_pConfig->GetNetworkDHCP())
+				m_pNet = new CNetSubSystem(0, 0, 0, 0, m_pConfig->GetNetworkHostname(), NetDeviceType);
+			else
+				m_pNet = new CNetSubSystem(
+					m_pConfig->GetNetworkIPAddress().Get(),
+					m_pConfig->GetNetworkSubnetMask().Get(),
+					m_pConfig->GetNetworkDefaultGateway().Get(),
+					m_pConfig->GetNetworkDNSServer().Get(),
+					m_pConfig->GetNetworkHostname(),
+					NetDeviceType
+				);
+			if (!m_pNet || !m_pNet->Initialize(false)) // Check if m_pNet allocation succeeded
+			{
+				LOGERR("CMiniDexed::InitNetwork: Failed to initialize network subsystem");
+				delete m_pNet; m_pNet = nullptr; // Clean up if failed
+				delete m_WLAN; m_WLAN = nullptr; // Clean up WLAN if allocated
+				return false; // Return false as network init failed
+			}
+			// WPASupplicant needs to be started after netdevice available
+			if (NetDeviceType == NetDeviceTypeWLAN)
+			{
+				LOGNOTE("CMiniDexed::InitNetwork: Initializing WPASupplicant");
+				m_WPASupplicant = new CWPASupplicant(WLANConfigFile); // Allocate m_WPASupplicant
+				if (!m_WPASupplicant || !m_WPASupplicant->Initialize()) 
+				{
+					LOGERR("CMiniDexed::InitNetwork: Failed to initialize WPASupplicant, maybe wlan config is missing?"); 
+					delete m_WPASupplicant; m_WPASupplicant = nullptr; // Clean up if failed
+					// Continue without supplicant? Or return false? Decided to continue for now.
+				}
+			}
+			m_pNetDevice = CNetDevice::GetNetDevice(NetDeviceType);
+
+			// Allocate UDP MIDI device now that network might be up
+			m_UDPMIDI = new CUDPMIDIDevice(this, m_pConfig, &m_UI); // Allocate m_UDPMIDI
+			if (!m_UDPMIDI) {
+				LOGERR("CMiniDexed::InitNetwork: Failed to allocate UDP MIDI device");
+				// Clean up other network resources if needed, or handle error appropriately
+			} else {
+				// Synchronize UDP MIDI channels with current assignments
+				for (unsigned nTG = 0; nTG < m_nToneGenerators; ++nTG)
+					m_UDPMIDI->SetChannel(m_nMIDIChannel[nTG], nTG);
+			}
+		}
+		LOGNOTE("CMiniDexed::InitNetwork: returning %d", m_pNet != nullptr);
+		return m_pNet != nullptr;
+	}
+	else
+	{
+		LOGNOTE("CMiniDexed::InitNetwork: Network is not enabled in configuration");
+		return false;
+	}
 }
 

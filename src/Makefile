@@ -31,7 +31,9 @@ OBJS = main.o kernel.o minidexed.o config.o userinterface.o uimenu.o \
        effect_midi/modarpeggiator/common/midiHandler.o \
        effect_midi/modarpeggiator/common/pattern.o \
        effect_midi/modarpeggiator/utils.o \
-       effect_midi/modarpeggiator/arpeggiator.o
+       effect_midi/modarpeggiator/arpeggiator.o \
+       arm_float_to_q23.o \
+       net/ftpdaemon.o net/ftpworker.o net/applemidi.o net/udpmidi.o net/mdnspublisher.o udpmididevice.o
 
 OPTIMIZE = -O3
 
@@ -44,3 +46,10 @@ EXTRACLEAN += effect_audio/*.[od] \
               effect_midi/*.[od] \
               effect_midi/modarpeggiator/*.[od] \
               effect_midi/modarpeggiator/common/*.[od]
+
+# Clean target
+.PHONY: clean
+
+clean:
+	@echo "Cleaning up..."
+	rm -f $(OBJS) *.o *.d *~ core
