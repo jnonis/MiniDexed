@@ -12,7 +12,7 @@ MidiArp::MidiArp(float32_t samplerate, CDexedAdapter* synth) : MidiEffect(sample
 	this->setParameter(MidiArp::Param::ARP_MODE, 0);
 	this->setParameter(MidiArp::Param::DIVISION, 9);
 	this->setParameter(MidiArp::Param::NOTE_LENGTH, 70);
-	this->setParameter(MidiArp::Param::VELOCITY, 110);
+	this->setParameter(MidiArp::Param::VELOCITY, 0); // As Played by Default
 	this->setParameter(MidiArp::Param::OCTAVE_SPREAD, 1);
 	this->setParameter(MidiArp::Param::OCTAVE_MODE, 4);
 }
