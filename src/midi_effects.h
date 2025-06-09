@@ -3,6 +3,7 @@
 
 #include "effect_midi/midi_effect_base.h"
 #include "effect_midi/midi_arp.h"
+#include "effect_midi/midi_chord.h"
 
 class MidiEffects
 {
@@ -11,6 +12,7 @@ public:
 	{
 		NONE = MidiEffect::ID,
 		ARP = MidiArp::ID,
+		CHORD = MidiChord::ID,
 		UNKNOWN
 	};
 };
@@ -22,6 +24,8 @@ inline MidiEffect* newMidiEffect(unsigned type, float32_t samplerate, CDexedAdap
 	{
 	case MidiEffects::Types::ARP:
 		return new MidiArp(samplerate, synth);
+	case MidiEffects::Types::CHORD:
+		return new MidiChord(samplerate, synth);
 	default:
 		return new MidiEffect(samplerate, synth);
 	}
@@ -33,6 +37,8 @@ inline std::string getMidiFXTypeName(int type)
 	{
 	case MidiEffects::Types::ARP:
         return MidiArp::NAME;
+	case MidiEffects::Types::CHORD:
+        return MidiChord::NAME;
 	case MidiEffects::Types::NONE:
 	default:
         return MidiEffect::NAME;
@@ -124,6 +130,30 @@ inline std::string ToArpVelocity (int nValue)
 		return "As Played";
 	default:
 		return std::to_string (nValue);
+	}
+}
+
+inline std::string ToChordMode (int value)
+{
+	switch (value)
+	{
+	case MidiChord::Mode::FIFTH:
+		return "Fifth";
+	case MidiChord::Mode::FIFTH_OCT_DOWN:
+		return "Fifth+OctDw";
+	case MidiChord::Mode::FIFTH_OCT_UP:
+		return "Fifth+OctUp";
+	case MidiChord::Mode::OCT_DOWN:
+		return "Oct Down";
+	case MidiChord::Mode::OCT_UP:
+		return "Oct Up";
+	case MidiChord::Mode::OCT_UP_DOWN:
+		return "Oct Up+Down";
+	case MidiChord::Mode::MAJOR:
+		return "Major";
+	case MidiChord::Mode::MINOR:
+	default:
+    	return "Minor";
 	}
 }
 

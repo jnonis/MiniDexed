@@ -209,7 +209,8 @@ private:
 	
 	static TMenuItem s_MidiFXNone[];
 	static TMenuItem s_MidiFXArp[];
-
+	static TMenuItem s_MidiFXChord[];
+	
 	static const TMenuItem s_EditVoiceMenu[];
 	static const TMenuItem s_OperatorMenu[];
 	static const TMenuItem s_SaveMenu[];
@@ -235,6 +236,7 @@ private:
 	static const TParameter s_TGFXAPhaserParam[];
 	static const TParameter s_TGFXFlangerParam[];
 	static const TParameter s_TGMidiFXArpParam[];
+	static const TParameter s_TGMidiFXChordParam[];
 	static const TParameter s_VoiceParameter[];
 	static const TParameter s_OPParameter[];
 

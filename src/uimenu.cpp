@@ -366,6 +366,13 @@ CUIMenu::TMenuItem CUIMenu::s_MidiFXArp[] =
 	{0}
 };
 
+CUIMenu::TMenuItem CUIMenu::s_MidiFXChord[] =
+{
+	{"Bypass", EditTGMidiFXParameter, 0, MidiChord::Param::BYPASS},
+	{"Mode", EditTGMidiFXParameter, 0, MidiChord::Param::MODE},
+	{0}
+};
+
 // inserting menu items before "OP1" affect OPShortcutHandler()
 const CUIMenu::TMenuItem CUIMenu::s_EditVoiceMenu[] =
 {
@@ -661,6 +668,13 @@ const CUIMenu::TParameter CUIMenu::s_TGMidiFXArpParam[MidiArp::Param::UNKNOWN] =
 	{1, 4, 1}, // OCTAVE_SPREAD
 	{0, 4, 1, ToArpOctMode}, // OCTAVE_MODE
 	{0, 1, 1, ToOnOff} // PANIC
+};
+
+// must match MidiChord::Param
+const CUIMenu::TParameter CUIMenu::s_TGMidiFXChordParam[MidiChord::Param::UNKNOWN] =
+{
+	{0, 1, 1, ToOnOff}, // BYPASS
+	{0, MidiChord::Mode::MODE_UNKNOWN - 1, 1, ToChordMode}, // MODE
 };
 
 // must match DexedVoiceParameters in Synth_Dexed
@@ -3894,6 +3908,9 @@ CUIMenu::TMenuItem* CUIMenu::getMidiFXMenuItem(unsigned type)
 	case MidiEffects::Types::ARP:
 		menu = s_MidiFXArp;
 		break;
+	case MidiEffects::Types::CHORD:
+		menu = s_MidiFXChord;
+		break;
 	case MidiEffects::Types::NONE:
 	default:
         menu = s_MidiFXNone;
@@ -3909,6 +3926,8 @@ CUIMenu::TParameter CUIMenu::getMidiFXParameter(unsigned type, unsigned nParam)
 	{
 	case MidiEffects::Types::ARP:
 		pParam = s_TGMidiFXArpParam[nParam];
+	case MidiEffects::Types::CHORD:
+		pParam = s_TGMidiFXChordParam[nParam];
 	default:
 		break;
 	}
