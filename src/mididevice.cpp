@@ -190,14 +190,42 @@ void CMIDIDevice::MIDIMessageHandler (const u8 *pMessage, size_t nLength, unsign
 */
 
 	// Handle MIDI Thru
-	if (m_DeviceName.compare (m_pConfig->GetMIDIThruIn ()) == 0)
+	bool canThru = TRUE;
+	if (nLength == 1)
 	{
-		TDeviceMap::const_iterator Iterator;
-
-		Iterator = s_DeviceMap.find (m_pConfig->GetMIDIThruOut ());
-		if (Iterator != s_DeviceMap.end ())
+		if ((pMessage[0] == MIDI_TIMING_CLOCK) && m_pConfig->GetMIDIThruIgnoreClock())
 		{
-			Iterator->second->Send (pMessage, nLength, nCable);
+			canThru = FALSE;
+		}
+		if ((pMessage[0] == MIDI_ACTIVE_SENSING) && m_pConfig->GetMIDIThruIgnoreActiveSensing())
+		{
+			canThru = FALSE;
+		}
+	}
+
+	if (canThru)
+	{
+		if (m_DeviceName.compare (m_pConfig->GetMIDIThruIn ()) == 0)
+		{
+			TDeviceMap::const_iterator Iterator;
+
+			Iterator = s_DeviceMap.find (m_pConfig->GetMIDIThruOut ());
+			if (Iterator != s_DeviceMap.end ())
+			{
+				Iterator->second->Send (pMessage, nLength, nCable);
+			}
+		}
+
+		// Handle MIDI Thru 2
+		if (m_DeviceName.compare (m_pConfig->GetMIDIThru2In ()) == 0)
+		{
+			TDeviceMap::const_iterator Iterator;
+
+			Iterator = s_DeviceMap.find (m_pConfig->GetMIDIThru2Out ());
+			if (Iterator != s_DeviceMap.end ())
+			{
+				Iterator->second->Send (pMessage, nLength, nCable);
+			}
 		}
 	}
 
@@ -216,16 +244,20 @@ void CMIDIDevice::MIDIMessageHandler (const u8 *pMessage, size_t nLength, unsign
 	// GLOBAL MIDI SYSEX
 
 	// Set MIDI Channel for TX816/TX216 SysEx; in MiniDexed, we interpret the device parameter as the number of the TG (unlike the TX816/TX216 which has a hardware switch to select the TG)
-	if (nLength >= 6 && pMessage[0] == MIDI_SYSTEM_EXCLUSIVE_BEGIN && pMessage[1] == 0x43 && pMessage[3] == 0x04 && pMessage[4] == 0x01) {
+	if (nLength == 7 &&
+	    pMessage[0] == MIDI_SYSTEM_EXCLUSIVE_BEGIN &&
+	    pMessage[1] == 0x43 &&
+	    // pMessage[2] & 0x0F = TG number
+	    pMessage[3] == 0x04 &&
+	    pMessage[4] == 0x01 &&
+	    // pMessage[5] = target MIDI channel (0-15)
+	    pMessage[6] == MIDI_SYSTEM_EXCLUSIVE_END)
+	{
 		uint8_t mTG = pMessage[2] & 0x0F;
 		uint8_t val = pMessage[5];
 		LOGNOTE("MIDI-SYSEX: Set TG%d to MIDI Channel %d", mTG + 1, val & 0x0F);
 		m_pSynthesizer->SetMIDIChannel(val & 0x0F, mTG);
-		// Do not process this message further for any TGs
-		m_MIDISpinLock.Release();
-		return;
 	}
-
 	// Master Volume is set using a MIDI SysEx message as follows:
 	//   F0  Start of SysEx
 	//   7F  System Realtime SysEx
@@ -242,7 +274,7 @@ void CMIDIDevice::MIDIMessageHandler (const u8 *pMessage, size_t nLength, unsign
 	// Need to scale the volume parameter to fit
 	// a 14-bit value: 0..16383
 	// and then split into LSB/MSB.	
-	if (nLength == 8 &&
+	else if (nLength == 8 &&
 	    pMessage[0] == MIDI_SYSTEM_EXCLUSIVE_BEGIN &&
 	    pMessage[1] == 0x7F &&
 	    pMessage[2] == 0x7F &&
@@ -337,14 +369,9 @@ void CMIDIDevice::MIDIMessageHandler (const u8 *pMessage, size_t nLength, unsign
 				if (m_ChannelMap[nTG] == ucSysExChannel || m_ChannelMap[nTG] == OmniMode) {
 					LOGNOTE("MIDI-SYSEX: channel: %u, len: %u, TG: %u",m_ChannelMap[nTG],nLength,nTG);
 
-					HandleSystemExclusive(pMessage, nLength, nCable, nTG);
-					if (nLength == 5) {
-						break; // Send dump request only to the first TG that matches the MIDI channel requested via the SysEx message device ID
-					}
-
 					// Check for TX216/TX816 style performance sysex messages
 					
-					if (pMessage[3] == 0x04)
+					if (nLength == 7 && pMessage[3] == 0x04)
 					{
 						// TX816/TX216 Performance SysEx message
 						uint8_t mTG = pMessage[2] & 0x0F; // mTG = module/tone generator number (0-7)
@@ -452,6 +479,9 @@ void CMIDIDevice::MIDIMessageHandler (const u8 *pMessage, size_t nLength, unsign
 					else
 					{
 						HandleSystemExclusive(pMessage, nLength, nCable, nTG);
+						if (nLength == 5) {
+							break; // Send dump request only to the first TG that matches the MIDI channel requested via the SysEx message device ID
+						}
 					}
 				}
 			}
@@ -546,7 +576,7 @@ void CMIDIDevice::MIDIMessageHandler (const u8 *pMessage, size_t nLength, unsign
 							m_pSynthesizer->BankSelectLSB (pMessage[2], nTG);
 							break;
 		
-						case MIDI_CC_BANK_SUSTAIN:
+						case MIDI_CC_SUSTAIN:
 							m_pSynthesizer->setSustain (pMessage[2] >= 64, nTG);
 							break;
 
