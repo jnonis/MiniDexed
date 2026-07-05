@@ -9,7 +9,7 @@ CMSIS_DIR = ../CMSIS_5/CMSIS
 OBJS = main.o kernel.o minidexed.o config.o userinterface.o uimenu.o \
        mididevice.o midikeyboard.o serialmididevice.o pckeyboard.o \
        sysexfileloader.o performanceconfig.o perftimer.o \
-       uibuttons.o midipin.o displaybuffer.o effect_compressor.o \
+       uibuttons.o midipin.o displaybuffer.o \
        effect_audio/effect_chorus.o \
        effect_audio/effect_delay.o \
        effect_audio/effect_platervbstereo.o \
@@ -32,14 +32,10 @@ OBJS = main.o kernel.o minidexed.o config.o userinterface.o uimenu.o \
        effect_midi/modarpeggiator/common/pattern.o \
        effect_midi/modarpeggiator/utils.o \
        effect_midi/modarpeggiator/arpeggiator.o \
-       arm_float_to_q23.o \
+       arm_float_to_q23.o arm_scale_zip_f32.o \
        net/ftpdaemon.o net/ftpworker.o net/applemidi.o net/udpmidi.o net/mdnspublisher.o udpmididevice.o
 
-OPTIMIZE = -O3
-
-include ./Synth_Dexed.mk
-include ./Rules.mk
-
+EXTRACLEAN = $(OBJS) $(OBJS:.o=.d)
 EXTRACLEAN += effect_audio/*.[od] \
               effect_audio/moddistortion/*.[od] \
               effect_audio/rkrlv2/*.[od] \
@@ -47,9 +43,7 @@ EXTRACLEAN += effect_audio/*.[od] \
               effect_midi/modarpeggiator/*.[od] \
               effect_midi/modarpeggiator/common/*.[od]
 
-# Clean target
-.PHONY: clean
+OPTIMIZE = -O3
 
-clean:
-	@echo "Cleaning up..."
-	rm -f $(OBJS) *.o *.d *~ core
+include ./Synth_Dexed.mk
+include ./Rules.mk

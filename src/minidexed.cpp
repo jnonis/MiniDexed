@@ -31,6 +31,7 @@
 #include <assert.h>
 #include <chrono>
 #include "arm_float_to_q23.h"
+#include "arm_scale_zip_f32.h"
 
 const char WLANFirmwarePath[] = "SD:firmware/";
 const char WLANConfigFile[]   = "SD:wpa_supplicant.conf";
@@ -1716,19 +1717,7 @@ void CMiniDexed::ProcessSound (void)
 
 			// Convert dual float array (left, right) to single int16 array (left/right)
 			float32_t tmp_float[nFrames*2];
-			for(uint16_t i=0; i<nFrames;i++)
-			{
-				if(nMasterVolume >0.0 && nMasterVolume <1.0)
-				{
-					tmp_float[i*2]=SampleBuffer[indexL][i] * nMasterVolume;
-					tmp_float[(i*2)+1]=SampleBuffer[indexR][i] * nMasterVolume;
-				}
-				else if(nMasterVolume == 1.0)
-				{
-					tmp_float[i*2]=SampleBuffer[indexL][i];
-					tmp_float[(i*2)+1]=SampleBuffer[indexR][i];
-				}
-			}
+			arm_scale_zip_f32(SampleBuffer[indexL], SampleBuffer[indexR], nMasterVolume, tmp_float, nFrames);
 			arm_float_to_q23(tmp_float, tmp_int, nFrames * 2);
 		}
 		else
@@ -1948,33 +1937,17 @@ void CMiniDexed::ProcessSound (void)
 					m_MasterFXSpinLock.Release ();
 				}
 
-				// swap stereo channels if needed prior to writing back out
-				if (m_bChannelsSwapped)
-				{
-					indexL=1;
-					indexR=0;
-				}
-
-				// Convert dual float array (left, right) to single int16 array (left/right)
-				for(uint16_t i=0; i<nFrames;i++)
-				{
-					if(nMasterVolume >0.0 && nMasterVolume <1.0)
-					{
-						tmp_float[i*2]=SampleBuffer[indexL][i] * nMasterVolume;
-						tmp_float[(i*2)+1]=SampleBuffer[indexR][i] * nMasterVolume;
-					}
-					else if(nMasterVolume == 1.0)
-					{
-						tmp_float[i*2]=SampleBuffer[indexL][i];
-						tmp_float[(i*2)+1]=SampleBuffer[indexR][i];
-					}
-				}
-				arm_float_to_q23(tmp_float,tmp_int,nFrames*2);
-			}
-			else
+			// swap stereo channels if needed prior to writing back out
+			if (m_bChannelsSwapped)
 			{
-				arm_fill_q31(0, tmp_int, nFrames * 2);
+				indexL=1;
+				indexR=0;
 			}
+
+			// Convert dual float array (left, right) to single int16 array (left/right)
+			arm_scale_zip_f32(SampleBuffer[indexL], SampleBuffer[indexR], nMasterVolume, tmp_float, nFrames);
+
+			arm_float_to_q23(tmp_float,tmp_int,nFrames*2);
 
 			// Prevent PCM510x analog mute from kicking in
 			if (tmp_int[nFrames * 2 - 1] == 0)
@@ -2908,7 +2881,7 @@ void CMiniDexed::UpdateNetwork()
 		if (m_pConfig->GetSyslogEnabled())
 		{
 			LOGNOTE ("Syslog server is enabled in configuration");
-			CIPAddress ServerIP = m_pConfig->GetNetworkSyslogServerIPAddress();
+			const CIPAddress& ServerIP = m_pConfig->GetNetworkSyslogServerIPAddress();
 			if (ServerIP.IsSet () && !ServerIP.IsNull ())
 			{
 				static const u16 usServerPort = 8514;
@@ -3005,18 +2978,31 @@ bool CMiniDexed::InitNetwork()
 		
 		if (NetDeviceType != NetDeviceTypeUnknown)
 		{
-			LOGNOTE("CMiniDexed::InitNetwork: Creating CNetSubSystem");
 			if (m_pConfig->GetNetworkDHCP())
+			{
+				LOGNOTE("CMiniDexed::InitNetwork: Creating CNetSubSystem with DHCP (Hostname: %s)", m_pConfig->GetNetworkHostname());
 				m_pNet = new CNetSubSystem(0, 0, 0, 0, m_pConfig->GetNetworkHostname(), NetDeviceType);
-			else
+			}
+			else if (m_pConfig->GetNetworkIPAddress().IsSet() && m_pConfig->GetNetworkSubnetMask().IsSet())
+			{
+				CString IPString, SubnetString;
+				m_pConfig->GetNetworkIPAddress().Format (&IPString);
+				m_pConfig->GetNetworkSubnetMask().Format (&SubnetString);
+				LOGNOTE("CMiniDexed::InitNetwork: Creating CNetSubSystem with IP: %s / %s", (const char*)IPString, (const char*)SubnetString);
 				m_pNet = new CNetSubSystem(
 					m_pConfig->GetNetworkIPAddress().Get(),
 					m_pConfig->GetNetworkSubnetMask().Get(),
-					m_pConfig->GetNetworkDefaultGateway().Get(),
-					m_pConfig->GetNetworkDNSServer().Get(),
+					m_pConfig->GetNetworkDefaultGateway().IsSet() ? m_pConfig->GetNetworkDefaultGateway().Get() : 0,
+					m_pConfig->GetNetworkDNSServer().IsSet() ? m_pConfig->GetNetworkDNSServer().Get() : 0,
 					m_pConfig->GetNetworkHostname(),
-					NetDeviceType
-				);
+					NetDeviceType);
+			}
+			else
+			{
+				LOGNOTE ("CMiniDexed::InitNetwork: Neither DHCP nor IP address/subnet mask is set, using DHCP (Hostname: %s)", m_pConfig->GetNetworkHostname());
+				m_pNet = new CNetSubSystem(0, 0, 0, 0, m_pConfig->GetNetworkHostname(), NetDeviceType);
+			}
+
 			if (!m_pNet || !m_pNet->Initialize(false)) // Check if m_pNet allocation succeeded
 			{
 				LOGERR("CMiniDexed::InitNetwork: Failed to initialize network subsystem");

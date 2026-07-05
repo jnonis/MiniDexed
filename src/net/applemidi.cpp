@@ -813,6 +813,8 @@ bool CAppleMIDIParticipant::SendAcceptInvitationPacket(CSocket* pSocket, CIPAddr
 	else
 		strncpy(AcceptPacket.Name, "MiniDexed", sizeof(AcceptPacket.Name));
 
+	AcceptPacket.Name[sizeof(AcceptPacket.Name) - 1] = 0;
+
 #ifdef APPLEMIDI_DEBUG
 	LOGNOTE("--> Accept invitation");
 #endif
@@ -919,6 +921,8 @@ bool CAppleMIDIParticipant::SendMIDIToHost(const u8* pData, size_t nSize)
 		return false;
 	}
 	
-	LOGDBG("Successfully sent %zu bytes of MIDI data", nSize);
+#ifdef APPLEMIDI_DEBUG
+	LOGDBG("Successfully sent %u bytes of MIDI data", nSize);
+#endif
 	return true;
 }

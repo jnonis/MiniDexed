@@ -140,7 +140,7 @@ CString CDisplayBufferDevice::PrepareMessage()
 	}
 
 	bool onchange = false;
-	for (u_int8_t i = 0; i < m_DisplayState.GetLength(); i++)
+	for (uint8_t i = 0; i < m_DisplayState.GetLength(); i++)
 	{
 		if (m_DisplayState[i] != m_DisplayWriteBuffer[i])
 		{

@@ -47,7 +47,6 @@
 #include <circle/spinlock.h>
 #include "common.h"
 #include "effect_mixer.hpp"
-#include "effect_compressor.h"
 #include "effects.h"
 #include "midi_effects.h"
 #include "udpmididevice.h"

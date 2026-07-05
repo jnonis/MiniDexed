@@ -25,6 +25,7 @@
 #include <circle/timer.h>
 #include <string>
 #include <cstring>
+#include <cstdint>
 
 class CDisplayBufferDevice : public CWriteBufferDevice
 {
